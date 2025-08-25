@@ -80,7 +80,6 @@
       return { type:'Feature', properties:{}, geometry:{ type:'Polygon', coordinates: coords } };
     }
     function parseMultiPolygon(w){
-      // Remove MULTIPOLYGON and outer triple parentheses, then split polygons and rings
       const inner = w.trim().replace(/^MULTIPOLYGON\s*\(\s*\(\s*\(/i,'').replace(/\)\s*\)\s*\)\s*$/,'');
       const polys = inner.split(/\)\s*\)\s*,\s*\(\s*\(/);
       const coordinates = polys.map(poly => {
@@ -108,7 +107,6 @@
         show('WKT parse error: ' + err.message);
       }
     } else {
-      // Helpful hint when opening the page without params
       console.log('Tip: append ?wkt=POLYGON((lon lat, ...)) to overlay a parcel.');
     }
 
