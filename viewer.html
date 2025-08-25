@@ -4,16 +4,24 @@
   <meta charset="utf-8" />
   <title>Parcel + Transmission Lines Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-zL8Y2mI8/0yLQcP1f4jCmPzH4h7r3Jd1p0i9IPz0Z5w=" crossorigin="anonymous">
   <style>
-    html,body,#map { height: 100%; margin: 0; }
+    /* CRITICAL: these ensure the map actually has height */
+    html, body, #map { height: 100%; margin: 0; }
     .legend {
       position:absolute; bottom:12px; left:12px; background:#fff; padding:8px 10px; border-radius:8px;
       box-shadow:0 2px 8px rgba(0,0,0,.15); font:14px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      z-index: 1000;
     }
     .legend span { display:inline-block; width:14px; height:3px; vertical-align:middle; margin-right:6px; }
     .legend .parcel { background:#e53935; height:4px; }
     .legend .tx { background:#1565c0; }
+    .notice {
+      position:absolute; top:12px; left:50%; transform:translateX(-50%);
+      background:#fff; padding:8px 10px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,.15);
+      font:13px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial; z-index:1000; display:none;
+    }
   </style>
 </head>
 <body>
@@ -22,82 +30,93 @@
     <div><span class="parcel"></span> Parcel</div>
     <div><span class="tx"></span> Transmission lines</div>
   </div>
+  <div class="notice" id="notice"></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
+  <!-- Leaflet + Esri-Leaflet JS -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-jcWnP9A2rGkW4yVHKy2dV6xQ6qgkHk0I2p2qZ2V07r4=" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/esri-leaflet@3.0.12/dist/esri-leaflet.js" integrity="sha256-4fC2xob1eXhY1bTnW7sP7+qQMQsWfZkqgZ2xNqX2bqU=" crossorigin="anonymous"></script>
   <script>
-    // --- Config: default ArcGIS transmission lines layer (you can change this anytime) ---
+    // Default ArcGIS transmission lines layer (your link)
     const DEFAULT_ARCGIS =
       'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0';
 
-    // --- Read URL params ---
     const qs = new URLSearchParams(location.search);
     const wkt = (qs.get('wkt') || '').trim();
     const arcgis = (qs.get('arcgis') || DEFAULT_ARCGIS).trim();
 
-    // --- Map init ---
-    const map = L.map('map', { zoomControl: true }).setView([39,-96], 4);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution:'&copy; OpenStreetMap' }).addTo(map);
+    // Map init
+    const map = L.map('map', { zoomControl: true }).setView([39, -96], 4);
+    const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 20,
+      attribution: '&copy; OpenStreetMap'
+    });
+    tiles.addTo(map);
+    tiles.on('tileerror', () => show('Map tiles failed to load — check your network/CORS.'));
 
-    // --- WKT helpers (POLYGON + MULTIPOLYGON, lon lat order) ---
-    function parseWktToGeoJSON(wkt) {
-      // Supports POLYGON (...) and MULTIPOLYGON (...). Assumes lon lat order.
-      const s = wkt.replace(/\s+/g,' ').toUpperCase();
-      if (s.startsWith('MULTIPOLYGON')) return parseMultiPolygon(wkt);
-      if (s.startsWith('POLYGON')) return parsePolygon(wkt);
+    function show(msg){
+      const n = document.getElementById('notice');
+      n.textContent = msg;
+      n.style.display = 'block';
+    }
+
+    // --- WKT parsing: supports POLYGON and MULTIPOLYGON (lon lat order) ---
+    function parseWktToGeoJSON(w){
+      const S = w.replace(/\s+/g,' ').trim().toUpperCase();
+      if (S.startsWith('MULTIPOLYGON')) return parseMultiPolygon(w);
+      if (S.startsWith('POLYGON')) return parsePolygon(w);
       throw new Error('WKT must be POLYGON or MULTIPOLYGON with lon lat coordinates.');
     }
-    function splitRings(text) {
-      // splits " ( ( ... ) , ( ... ) ) " rings; handles inner rings if present
-      // remove POLYGON (( and )) or inner parentheses
-      const inner = text.trim().replace(/^POLYGON\s*\(\s*\(/i,'').replace(/\)\s*\)\s*$/,'');
-      // could still have inner rings separated by ') , ('
-      return inner.split(/\)\s*,\s*\(/);
-    }
-    function parsePolygon(wkt) {
-      const rings = splitRings(wkt);
+    function parsePolygon(w){
+      const inner = w.trim().replace(/^POLYGON\s*\(\s*\(/i,'').replace(/\)\s*\)\s*$/,'');
+      const rings = inner.split(/\)\s*,\s*\(/);
       const coords = rings.map(ring => {
         const pts = ring.split(',').map(p => p.trim().split(/\s+/).map(Number));
-        // ensure closed
         const f = pts[0], l = pts[pts.length-1];
-        if (!l || f[0] !== l[0] || f[1] !== l[1]) pts.push([f[0], f[1]]);
-        // GeoJSON ring [ [lon,lat], ... ]
-        return pts.map(([lon,lat]) => [lon,lat]);
+        if (!l || f[0]!==l[0] || f[1]!==l[1]) pts.push([f[0], f[1]]);
+        return pts.map(([lon,lat]) => [lon,lat]); // GeoJSON expects [lon,lat]
       });
       return { type:'Feature', properties:{}, geometry:{ type:'Polygon', coordinates: coords } };
     }
-    function parseMultiPolygon(wkt) {
-      // Remove MULTIPOLYGON and outer parentheses, then split polygons
-      const inner = wkt.trim().replace(/^MULTIPOLYGON\s*\(\s*\(/i,'').replace(/\)\s*\)\s*$/,'');
-      const polys = inner.split(/\)\s*\)\s*,\s*\(\s*\(/); // separates ")) , ((" between polys
+    function parseMultiPolygon(w){
+      const inner = w.trim().replace(/^MULTIPOLYGON\s*\(\s*\(\s*\(/i,'').replace(/\)\s*\)\s*\)\s*$/,'');
+      const polys = inner.split(/\)\s*\)\s*,\s*\(\s*\(/);
       const coordinates = polys.map(poly => {
-        const rings = poly.split(/\)\s*,\s*\(/); // rings inside each polygon
+        const rings = poly.split(/\)\s*,\s*\(/);
         return rings.map(ring => {
           const pts = ring.split(',').map(p => p.trim().split(/\s+/).map(Number));
           const f = pts[0], l = pts[pts.length-1];
-          if (!l || f[0] !== l[0] || f[1] !== l[1]) pts.push([f[0], f[1]]);
+          if (!l || f[0]!==l[0] || f[1]!==l[1]) pts.push([f[0], f[1]]);
           return pts.map(([lon,lat]) => [lon,lat]);
         });
       });
-      return { type:'Feature', properties:{}, geometry:{ type:'MultiPolygon', coordinates: coordinates } };
+      return { type:'Feature', properties:{}, geometry:{ type:'MultiPolygon', coordinates } };
     }
 
-    // --- Draw parcel if provided ---
+    // Draw parcel (if provided)
     let parcelLayer = null;
     if (wkt) {
       try {
         const feature = parseWktToGeoJSON(wkt);
-        parcelLayer = L.geoJSON(feature, {
-          style: { color:'#e53935', weight:3, fillOpacity:0.2 }
-        }).addTo(map);
+        parcelLayer = L.geoJSON(feature, { style: { color:'#e53935', weight:3, fillOpacity:0.2 } }).addTo(map);
         try { map.fitBounds(parcelLayer.getBounds(), { padding:[24,24] }); } catch(e){}
       } catch (err) {
-        alert('WKT parse error: ' + err.message);
+        show('WKT parse error: ' + err.message);
       }
     } else {
-      // hint for first-time open
-      console.log('Tip: pass ?wkt=POLYGON((lon lat, ...)) in the URL');
+      show('Tip: append ?wkt=POLYGON((lon lat, ...)) to the URL.');
     }
 
-    // --- Transmission lines overlay (ArcGIS Feature Service) ---
-    if (arcgis
+    // Transmission lines overlay
+    if (arcgis) {
+      L.esri.featureLayer({
+        url: arcgis,
+        style: { color:'#1565c0', weight:2 }
+      })
+      .on('loading', () => { /* you could show spinner */ })
+      .on('load', () => { /* layer loaded */ })
+      .on('requesterror', (e) => show('ArcGIS layer error: ' + (e && e.message ? e.message : 'check URL')))
+      .addTo(map);
+    }
+  </script>
+</body>
+</html>
