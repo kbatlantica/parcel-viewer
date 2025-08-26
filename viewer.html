@@ -5,8 +5,8 @@
   <title>Parcel + Transmission Lines Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-zL8Y2mI8/0yLQcP1f4jCmPzH4h7r3Jd1p0i9IPz0Z5w=" crossorigin="anonymous">
+  <!-- Leaflet CSS (no SRI) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
 
   <style>
     html, body, #map { height: 100%; margin: 0; }
@@ -33,27 +33,25 @@
   </div>
   <div class="notice" id="notice"></div>
 
-  <!-- Leaflet + Esri-Leaflet JS -->
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-jcWnP9A2rGkW4yVHKy2dV6xQ6qgkHk0I2p2qZ2V07r4=" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/esri-leaflet@3.0.12/dist/esri-leaflet.js" integrity="sha256-4fC2xob1eXhY1bTnW7sP7+qQMQsWfZkqgZ2xNqX2bqU=" crossorigin="anonymous"></script>
+  <!-- Leaflet + Esri-Leaflet JS (no SRI) -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
 
   <script>
-    // --- Defaults & URL params ---
+    // Default ArcGIS transmission lines layer
     const DEFAULT_ARCGIS =
       'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0';
 
     const qs = new URLSearchParams(location.search);
-    const wkt    = (qs.get('wkt')    || '').trim();                // optional POLYGON/MULTIPOLYGON in lon lat order
-    const arcgis = (qs.get('arcgis') || DEFAULT_ARCGIS).trim();    // optional FeatureService URL
+    const wkt    = (qs.get('wkt')    || '').trim();                // POLYGON/MULTIPOLYGON (lon lat order)
+    const arcgis = (qs.get('arcgis') || DEFAULT_ARCGIS).trim();    // FeatureService URL (optional)
 
-    // --- Map init ---
+    // Map init
     const map = L.map('map', { zoomControl: true }).setView([39, -96], 4);
     const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 20,
       attribution: '&copy; OpenStreetMap'
     }).addTo(map);
-
-    tiles.on('tileerror', () => show('Map tiles failed to load — check network/CORS.'));
 
     function show(msg){
       const n = document.getElementById('notice');
@@ -94,28 +92,24 @@
       return { type:'Feature', properties:{}, geometry:{ type:'MultiPolygon', coordinates } };
     }
 
-    // --- Draw parcel if provided ---
+    // Draw parcel if provided
     let parcelLayer = null;
     if (wkt) {
       try {
         const feature = parseWktToGeoJSON(wkt);
-        parcelLayer = L.geoJSON(feature, {
-          style: { color:'#e53935', weight:3, fillOpacity:0.2 }
-        }).addTo(map);
+        parcelLayer = L.geoJSON(feature, { style: { color:'#e53935', weight:3, fillOpacity:0.2 } }).addTo(map);
         try { map.fitBounds(parcelLayer.getBounds(), { padding:[24,24] }); } catch(e){}
       } catch (err) {
         show('WKT parse error: ' + err.message);
       }
-    } else {
-      console.log('Tip: append ?wkt=POLYGON((lon lat, ...)) to overlay a parcel.');
     }
 
-    // --- Transmission lines overlay (ArcGIS Feature Service) ---
+    // Transmission lines overlay (ArcGIS Feature Service)
     const tx = L.esri.featureLayer({
       url: arcgis,
       style: { color:'#1565c0', weight:2 }
     })
-    .on('requesterror', (e) => show('ArcGIS layer error — check the service URL or CORS.'))
+    .on('requesterror', () => show('ArcGIS layer error — check the service URL or CORS.'))
     .addTo(map);
 
     // Auto-fit to the transmission layer if no parcel is passed
